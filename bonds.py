@@ -1,66 +1,78 @@
+from utils import Instrument
+from datetime import date
+from typing import Callable
 from scipy.optimize import root
 import numpy as np
 import matplotlib.pyplot as plt
 
-price = 82.44
-nominal = 100
-coupon_dates = [1, 2, 3, 4, 5, 6, 7]
-coupon_rate = 0.00625
+class Bond(Instrument):
+    def __init__(self, price: float, valuation_date: date, day_count: Callable, months: int, nominal: float, coupon_dates: list[float], coupon_rates: list[float], rates: list[float]):
+        super().__init__("bond", valuation_date, day_count, months)
+        self.price = price
+        self.nominal = nominal
+        self.coupon_dates = coupon_dates
+        self.coupon_rates = coupon_rates
+        self.rates = rates
 
-def price_bond(nominal: float, coupon_dates: list[float], coupon_rate: float, rates: list[float]) -> float:
-    total = 0
-    for i, date in enumerate(coupon_dates):
-        total += (coupon_rate * nominal / (1 + rates[i]) ** date)
-    total += (nominal / (1 + rates[-1]) ** coupon_dates[-1])
-    return total
+        self.YTM = self.compute_YTM()
+        self.duration = self.compute_duration()
+        self.modified_duration = self.compute_modified_duration()
+        self.sensitivity = self.compute_sensitivity()
+        self.convexity = self.compute_convexity()
+        self.DV01 = self.compute_DV01()
+        self.clean_price = None
+        self.dirty_price = None
 
-def YTM(price: float, nominal: float, coupon_dates: list[float], coupon_rate: float) -> float:
+    def price_bond(self) -> float:
+        total = 0
+        for i, date in enumerate(self.coupon_dates):
+            total += (self.coupon_rates[i] * self.nominal / (1 + self.rates[i]) ** date)
+        total += (self.nominal / (1 + self.rates[-1]) ** self.coupon_dates[-1])
+        return total
+    
+    def compute_YTM(self) -> float:
+        rates = self.rates.copy()
+        def equation(YTM: float) -> float:
+            self.rates = [YTM] * len(self.coupon_dates)
+            return self.price - self.price_bond()
 
-    def equation(rate: float) -> float:
-        return price - price_bond(nominal, coupon_dates, coupon_rate, [rate] * len(coupon_dates))
+        solution = root(equation, 0.05).x[0]
+        self.rates = rates
+        return solution
+    
+    def compute_duration(self) -> float:
+        total = 0
+        for i, date in enumerate(self.coupon_dates):
+            total += (date * self.coupon_rates[i] * self.nominal / (1 + self.YTM) ** date)
+        total += (self.coupon_dates[-1] * self.nominal / (1 + self.YTM) ** self.coupon_dates[-1])
+        return total / self.price
+    
+    def compute_modified_duration(self) -> float:
+        return self.duration / (1 + self.YTM)
+    
+    def compute_sensitivity(self) -> float:
+        return self.modified_duration
+    
+    def compute_convexity(self) -> float:
+        total = 0
+        for i, t in enumerate(self.coupon_dates):
+            total += t * (t + 1) * self.coupon_rates[i] * self.nominal / (1 + self.YTM) ** t
+        total += self.coupon_dates[-1] * (self.coupon_dates[-1] + 1) * self.nominal / (1 + self.YTM) ** self.coupon_dates[-1]
+        return total / (self.price * (1 + self.YTM) ** 2)
+    
+    def compute_DV01(self) -> float:
+        return -(self.modified_duration * self.price) / 10000
+    
+    def display_metrics(self):
+        print(f"Price: {self.price:.4f}")
+        print(f"YTM: {self.YTM:.4%}")
+        print(f"Duration: {self.duration:.4f}")
+        print(f"Modified Duration: {self.modified_duration:.4f}")
+        print(f"Sensitivity: {self.sensitivity:.4f}")
+        print(f"Convexity: {self.convexity:.4f}")
+        print(f"DV01: {self.DV01:.4f}")
 
-    return root(equation, 0.05).x[0]
-
-def duration(price: float, nominal: float, coupon_dates: list[float], coupon_rate: float, rate: float) -> float:
-    total = 0
-    for date in coupon_dates:
-        total += (date * coupon_rate * nominal / (1 + rate) ** date)
-    total += (coupon_dates[-1] * nominal / (1 + rate) ** coupon_dates[-1])
-    return total / price
-
-def duration_modify(price: float, nominal: float, coupon_dates: list[float], coupon_rate: float, rate: float) -> float:
-    return duration(price, nominal, coupon_dates, coupon_rate, rate) / (1 + rate)
-
-def derive(f: callable, x: float, h: float = 1e-5) -> float:
-    return (f(x + h) - f(x - h)) / (2 * h)
-
-def sensitivity(nominal: float, coupon_dates: list[float], coupon_rate: float, rate: float) -> float:
-    return duration_modify(price_bond(nominal, coupon_dates, coupon_rate, [rate] * 7), nominal, coupon_dates, coupon_rate, rate)
-
-def convexity(price: float, nominal: float, coupon_dates: list[float], coupon_rate: float, rate: float) -> float:
-    total = 0
-    for date in coupon_dates:
-        total += (date * (date + 1) * coupon_rate * nominal / (1 + rate) ** date)
-    total += (coupon_dates[-1] * (coupon_dates[-1] + 1) * nominal / (1 + rate) ** coupon_dates[-1])
-    return total / price
-
-def DV01(price: float, nominal: float, coupon_dates: list[float], coupon_rate: float, rate: float) -> float:
-    return -(duration_modify(price, nominal, coupon_dates, coupon_rate, rate) * price) / 10000
-
-# Dirty price, clean price coupon couru
-
-def main():
-    rate = YTM(price, nominal, coupon_dates, coupon_rate)
-    print(f"YTM : {rate}")
-    print(f"Duration : {duration(price, nominal, coupon_dates, coupon_rate, rate)}")
-    print(f"Modified Duration : {duration_modify(price, nominal, coupon_dates, coupon_rate, rate)}")
-    print(f"Sensitivity : {sensitivity(nominal, coupon_dates, coupon_rate, rate)}")
-    print(f"Convexity : {convexity(price_bond(nominal, coupon_dates, coupon_rate, [0] * 7), nominal, coupon_dates, coupon_rate, rate)}")
-    print(f"DV01 : {DV01(price, nominal, coupon_dates, coupon_rate, rate)}")
-
-main()
-
-R = np.linspace(0, 1, 1000)
+"""R = np.linspace(0, 1, 1000)
 P = np.linspace(50, 150, 1000)
 
 plt.plot(R, [duration_modify(price, nominal, coupon_dates, coupon_rate, r) for r in R], color='blue', alpha=0.5)
@@ -111,4 +123,4 @@ plt.xlabel('Rate')
 plt.ylabel('Price')
 plt.legend(['Price', 'Duration and Convexity Approximation'])
 plt.grid()
-plt.show()
+plt.show()"""

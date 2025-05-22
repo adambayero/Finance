@@ -1,312 +1,144 @@
+from utils import nelson_siegel, nelson_siegel_svensson, Instrument, display_grid
 from datetime import date
 from dateutil.relativedelta import relativedelta
-from typing import Callable, List, Union
+from typing import Callable
 import numpy as np
 from numpy.typing import NDArray
-from scipy.interpolate import CubicSpline
 from scipy.optimize import root, curve_fit
-from tabulate import tabulate
-import calendar
-import matplotlib.pyplot as plt
-import matplotlib.gridspec as gridspec
 
-def actual_360(start: date, end: date) -> float:
-    return (end - start).days / 360
-
-def actual_365(start: date, end: date) -> float:
-    return (end - start).days / 365
-
-def third_wednesday(year: int, month: int) -> date:
-    c = calendar.Calendar(firstweekday=calendar.MONDAY)
-    wednesdays = [day for day in c.itermonthdays2(year, month) if day[0] != 0 and day[1] == calendar.WEDNESDAY]
-    return date(year, month, wednesdays[2][0])
-
-def compute_year_fractions(dates: list[date], valuation_date: date, day_count: Callable[[date, date], float]) -> list[float]:
-    return [day_count(valuation_date, d) for d in dates]
-
-def prepare_future_intervals(dates: List[date], valuation_date: date, day_count: Callable[[date, date], float]) -> List[List[float]]:
-    return [[day_count(valuation_date, d - relativedelta(months=3)), day_count(valuation_date, d)] for d in dates]
-
-def prepare_swap_dates(swap_dates: list[date], valuation_date: date, day_count: Callable[[date, date], float], months: int) -> list[list[float]]:
-    dates = []
-    for swap_date in swap_dates:
-        coupon_dates = []
-        current_date = valuation_date
-        while current_date <= swap_date:
-            coupon_dates.append(current_date)
-            current_date += relativedelta(months=months)
-        dates.append([day_count(valuation_date, t) for t in coupon_dates])
-    return dates
-
-def linear_interpolation(curve: dict, t: float) -> float:
-    known_ts = sorted(curve.keys())
-    if t in curve:
-        return curve[t]
-    for i in range(len(known_ts) - 1):
-        t1, t2 = known_ts[i], known_ts[i+1]
-        if t1 < t < t2:
-            D1, D2 = curve[t1], curve[t2]
-            return np.interp(t, [t1, t2], [D1, D2])
-    raise ValueError(f"t={t} not in range")
-
-def log_interpolation(curve: dict, t: float) -> float:
-    known_ts = sorted(curve.keys())
-    if t in curve:
-        return curve[t]
-    for i in range(len(known_ts) - 1):
-        t1, t2 = known_ts[i], known_ts[i+1]
-        if t1 < t < t2:
-            D1, D2 = np.log(curve[t1]), np.log(curve[t2])
-            return np.exp(np.interp(t, [t1, t2], [D1, D2]))
-    raise ValueError(f"t={t} not in range")
-
-def spline_interpolation(curve: dict, t: float) -> float:
-    known_ts = sorted(curve.keys())
-
-    try:
-        discounts = np.array([curve[ti] for ti in known_ts])
-        spline = CubicSpline(known_ts, discounts, bc_type='natural')
-        return spline(t)
-    except Exception as e:
-        raise ValueError(f"Erreur lors de l'interpolation en t={t:.2f} : {e}")
-
-def initialize_curve() -> dict:
-    return {0.0: 1.0}
-
-def price_deposit(curve: dict, rate: float, end: float) -> None:
-    curve[end] = 1 / (1 + rate * end)
-
-def price_future(curve: dict, price: float, start: float, end: float, interpolation: Callable) -> None:
-    rate = (100 - price) / 100
-    D_start = interpolation(curve, start)
-    curve[end] = D_start / (1 + (end - start) * rate)
-
-def price_swap(curve: dict, rate: float, coupon_dates: list[float], interpolation: Callable) -> None:
-    unknown_dates = [t for t in coupon_dates if t > max(curve.keys())]
-
-    def equation(x):
-        local_curve = curve.copy()
-        for t, d in zip(unknown_dates, x):
-            local_curve[t] = d
-        zero_curve = lambda t: interpolation(local_curve, t)
-        left_curve = curve.copy()
-        right_curve = {unknown_dates[i]: x[i] for i in range(1, len(x))}
-        res = []
-
-        pv_fixed = rate * sum((coupon_dates[i] - coupon_dates[i-1]) * zero_curve(t) for i, t in enumerate(coupon_dates) if i > 0)
-        pv_float = 1 - zero_curve(coupon_dates[-1])
-        res.append(pv_fixed - pv_float)
-
-        
-        if len(x) > 1:
-            interp_val = interpolation(curve | right_curve, unknown_dates[0])
-            res.append(x[0] - interp_val)
-
-        for i in range(1, len(x) - 1):
-            left_curve[unknown_dates[i - 1]] = x[i - 1]
-            del right_curve[unknown_dates[i]]
-            interp_val = interpolation(left_curve | right_curve, unknown_dates[i])
-            res.append(x[i] - interp_val)
-
-        return np.array(res)
-
-    guess = [list(curve.values())[-1]] * len(unknown_dates)
-    solution = root(equation, guess)
-    for t, d in zip(unknown_dates, solution.x):
-        curve[t] = d
-
-def bootstrapping(rate_deposit: float, end_deposit: float, future_prices: List[float], future_intervals: List[List[float]], swap_rates: List[float], swap_coupon_dates: List[List[float]], interpolation: Callable[[dict, float], float]) -> dict:
+class Deposit(Instrument):
+    def __init__(self, rate: float, valuation_date: date, day_count: Callable, months: int):
+        super().__init__("deposit", valuation_date, day_count, months)
+        self.rate = rate
+        self.maturity = self.day_count(self.valuation_date, self.valuation_date + relativedelta(months=self.months))
     
-    curve = initialize_curve()
+    def price(self) -> float:
+        return 1 / (1 + self.rate * self.maturity)
 
-    print(f"⏳ Bootstrapping deposit with rate {rate_deposit:.4%} over {end_deposit:.3f} years...")
-    price_deposit(curve, rate_deposit, end_deposit)
-    print(f"✅ Computed discount factor D({end_deposit:.3f}) = {curve[end_deposit]:.6f} added to the curve.\n")
+class Future(Instrument):
+    def __init__(self, rate: float, valuation_date: date, day_count: Callable, months: int, maturity: date):
+        super().__init__("future", valuation_date, day_count, months)
+        self.rate = rate
+        self.maturity = self.day_count(self.valuation_date, maturity)
+        self.start = self.day_count(self.valuation_date, maturity - relativedelta(months=self.months))
 
-    for i, (price, interval) in enumerate(zip(future_prices, future_intervals)):
-        start, end = interval
-        print(f"⏳ Bootstrapping future {i+1} from {start:.3f}y to {end:.3f}y at price {price:.3f}...")
-        price_future(curve, price, start, end, interpolation)
-        print(f"✅ Computed discount factor D({end:.3f}) = {curve[end]:.6f} added to the curve.\n")
+    def price(self, curve: dict, interpolation: Callable) -> float:
+        D_start = interpolation(curve, self.start)
+        return D_start / (1 + (self.maturity - self.start) * self.rate)
 
-    for i, (rate, coupons) in enumerate(zip(swap_rates, swap_coupon_dates)):
-        maturity = coupons[-1]
-        print(f"⏳ Bootstrapping swap {i+1} with maturity {maturity:.3f} years and fixed rate {rate:.4%}...")
+class Swap(Instrument):
+    def __init__(self, rate: float, valuation_date: date, day_count: Callable, months: int, coupon_interval: int):
+        super().__init__("swap", valuation_date, day_count, months)
+        self.rate = rate
+        self.coupon_dates = []
+        self.maturity = valuation_date + relativedelta(months=self.months)
+        current_date = self.valuation_date
+        while current_date <= self.maturity:
+            self.coupon_dates.append(day_count(valuation_date, current_date))
+            current_date += relativedelta(months=coupon_interval)
+        self.maturity = self.coupon_dates[-1]
 
-        unknowns = [t for t in swap_coupon_dates[i] if t > max(curve.keys())]
-        if not unknowns:
-            print(f"⚠️ Skip swap {i} (aucune nouvelle date à résoudre)\n")
-            continue
+    def price(self, curve: dict, interpolation: Callable) -> tuple[list[float], NDArray[np.float64]]:
+        unknown_dates = [t for t in self.coupon_dates if t > max(curve.keys())]
 
-        price_swap(curve, rate, coupons, interpolation)
+        def equation(x):
+            local_curve = curve.copy()
+            for t, d in zip(unknown_dates, x):
+                local_curve[t] = d
+            zero_curve = lambda t: interpolation(local_curve, t)
+            left_curve = curve.copy()
+            right_curve = {unknown_dates[i]: x[i] for i in range(1, len(x))}
+            res = []
 
-        if unknowns:
-            print(f"✅ Added {len(unknowns)} discount factors:")
-            for t in unknowns:
-                print(f"    • D({t:.3f}) = {curve[t]:.6f}")
-            print()
+            pv_fixed = self.rate * sum((self.coupon_dates[i] - self.coupon_dates[i-1]) * zero_curve(t) for i, t in enumerate(self.coupon_dates) if i > 0)
+            pv_float = 1 - zero_curve(self.coupon_dates[-1])
+            res.append(pv_fixed - pv_float)
 
-    print("🎯 Bootstrapping completed!\n")
-    return curve
+            
+            if len(x) > 1:
+                interp_val = interpolation(curve | right_curve, unknown_dates[0])
+                res.append(x[0] - interp_val)
 
+            for i in range(1, len(x) - 1):
+                left_curve[unknown_dates[i - 1]] = x[i - 1]
+                del right_curve[unknown_dates[i]]
+                interp_val = interpolation(left_curve | right_curve, unknown_dates[i])
+                res.append(x[i] - interp_val)
 
-def display_grid(X: List[List[NDArray[np.float64]]], Y: List[List[NDArray[np.float64]]], titles: Union[str, List[str]] = "", xlabels: Union[str, List[str]] = "", ylabels: Union[str, List[str]] = "", labels: Union[None, List[List[str]]] = None, alpha: float = 0.5, ncols: int = 2) -> None:
+            return np.array(res)
+
+        guess = [list(curve.values())[-1]] * len(unknown_dates)
+        solution = root(equation, guess)
+        return unknown_dates, solution.x
+
+class Curve:
+    def __init__(self, interpolation: Callable):
+        self.curve = {0.0: 1.0}
+        self.interpolation = interpolation
+
+        self.T = None
+        self.D = None
+        self.ZC = None
+        self.FWD = None
+
+        self.popt_ns = None
+        self.popt_nss = None
+
+        self.D_ns = None
+        self.D_nss = None
+        self.ZC_ns = None
+        self.ZC_nss = None
+        self.FWD_ns = None
+        self.FWD_nss = None
+
+    def update_curve(self, instrument: Instrument) -> None:
+        if instrument.name == "deposit":
+            self.curve[instrument.maturity] = instrument.price()
+        elif instrument.name == "future":
+            self.curve[instrument.maturity] = instrument.price(self.curve, self.interpolation)
+        elif instrument.name == "swap":
+            unknown_dates, solution = instrument.price(self.curve, self.interpolation)
+            for t, d in zip(unknown_dates, solution):
+                self.curve[t] = d
     
-    n = len(X)
-    nrows = (n + ncols - 1) // ncols
-    colors = ["blue", "red", "purple", "orange", "cyan", "brown", "magenta", "olive", "teal"]
+    def bootstrap(self, instruments: list[Instrument]) -> None:
+        for instrument in instruments:
+            print(f"⏳ Bootstrapping {instrument.name} with rate {instrument.rate:.4%}...")
+            self.update_curve(instrument)
+            print(f"✅ Computed discount factor D({instrument.maturity:.3f}) = {self.curve[instrument.maturity]:.6f} added to the curve.\n")
+        print("🎯 Bootstrapping completed!\n")
 
-    fig = plt.figure(figsize=(6 * ncols, 4 * nrows))
-    gs = gridspec.GridSpec(nrows, ncols, figure=fig)
+    def compute_curve(self) -> None:
+        T_sorted = sorted(self.curve.keys())
+        self.T = np.linspace(T_sorted[1], T_sorted[-1], 1000)
+        self.D = np.array([self.interpolation(self.curve, t) for t in self.T])
+        self.ZC = -np.log(self.D) / self.T
+        self.FWD = -np.gradient(np.log(self.D), self.T)
 
-    for i in range(n):
-        row, col = divmod(i, ncols)
+    def fit(self, method: Callable) -> NDArray[np.float64]:
+        bounds = {
+            nelson_siegel: ([-1, -10, -10, 0.01], [10, 10, 10, 10]),
+            nelson_siegel_svensson: ([-1, -10, -10, -10, 0.01, 0.01], [10, 10, 10, 10, 10, 10])
+        }
 
-        if i == n - 1 and (n % ncols != 0):
-            ax = fig.add_subplot(gs[row, :])
-        else:
-            ax = fig.add_subplot(gs[row, col])
+        popt, _ = curve_fit(method, self.T, self.ZC, bounds=bounds[method])
+        return popt
 
-        for j, (x, y) in enumerate(zip(X[i], Y[i])):
-            color = colors[j % len(colors)]
-            label = labels[i][j] if labels and labels[i] and j < len(labels[i]) else None
-            ax.plot(x, y, color=color, alpha=alpha, label=label)
+    def adjust_curve(self, method: Callable) -> None:
+        if method == nelson_siegel:
+            self.popt_ns = self.fit(method)
+            self.ZC_ns = nelson_siegel(self.T, *self.popt_ns)
+            self.D_ns = np.exp(-self.ZC_ns * self.T)
+            self.FWD_ns = -np.gradient(np.log(self.D_ns), self.T)
+        elif method == nelson_siegel_svensson:
+            self.popt_nss = self.fit(method)
+            self.ZC_nss = nelson_siegel_svensson(self.T, *self.popt_nss)
+            self.D_nss = np.exp(-self.ZC_nss * self.T)
+            self.FWD_nss = -np.gradient(np.log(self.D_nss), self.T)
 
-        ax.set_title(titles[i] if isinstance(titles, list) else titles)
-        ax.set_xlabel(xlabels[i] if isinstance(xlabels, list) else xlabels)
-        ax.set_ylabel(ylabels[i] if isinstance(ylabels, list) else ylabels)
-        ax.grid(True)
-        if labels and labels[i]:
-            ax.legend()
+def display_bootstrap_result(curves: list[Curve], legends: list[str]) -> None:
+    display_grid([[curve.T for curve in curves] for _ in range(2)], [[curve.D for curve in curves], [curve.ZC for curve in curves]], ["Discount", "Zero-Coupon"], "Maturity", ["Discount", "Zero-Coupon", "Forward"], [legends, legends])
 
-    plt.tight_layout()
-    plt.show()
-
-def nelson_siegel(t: NDArray[np.float64], beta0: float, beta1: float, beta2: float, lambd: float) -> NDArray[np.float64]:
-    term1 = (1 - np.exp(-lambd * t)) / (lambd * t)
-    term2 = term1 - np.exp(-lambd * t)
-    return beta0 + beta1 * term1 + beta2 * term2
-
-def nelson_siegel_svensson(t: NDArray[np.float64], beta0: float, beta1: float, beta2: float, beta3: float, lambd1: float, lambd2: float) -> NDArray[np.float64]:
-    term1 = (1 - np.exp(-lambd1 * t)) / (lambd1 * t)
-    term2 = term1 - np.exp(-lambd1 * t)
-    term3 = ((1 - np.exp(-lambd2 * t)) / (lambd2 * t)) - np.exp(-lambd2 * t)
-    return beta0 + beta1 * term1 + beta2 * term2 + beta3 * term3
-
-def fit(curve: dict, interpolation: Callable[[dict, float], float], method: Callable, n_points: int = 200) -> NDArray[np.float64]:
-    T_sorted = sorted(curve.keys())
-    T = np.linspace(T_sorted[1], T_sorted[-1], n_points)
-    D_interp = np.array([interpolation(curve, t) for t in T])
-    ZC = -np.log(D_interp) / T
-
-    bounds = {
-        nelson_siegel: ([-1, -10, -10, 0.01], [10, 10, 10, 10]),
-        nelson_siegel_svensson: ([-1, -10, -10, -10, 0.01, 0.01], [10, 10, 10, 10, 10, 10])
-    }
-
-    popt, _ = curve_fit(method, T, ZC, bounds=bounds[method])
-    return popt
-
-def display_tabular(params: list[float]) -> None:
-    greek_betas = ["β₀", "β₁", "β₂", "β₃", "β₄", "β₅", "β₆"]
-    lambdas = ["λ₁", "λ₂", "λ₃", "λ₄", "λ₅"]
-
-    names = []
-    for i in range(len(params)):
-        if i < 2:
-            names.append(greek_betas[i])
-        elif i < 2 + (len(params) - 2) // 2:
-            names.append(greek_betas[i])
-        else:
-            names.append(lambdas[i - (2 + (len(params) - 2) // 2)])
-
-    rows = [(name, f"{val:.6f}") for name, val in zip(names, params)]
-    print(tabulate(rows, headers=["Parameter", "Value"], tablefmt="fancy_grid")+"\n")
-
-def main() -> int:
-    valuation_date = date(2025, 4, 25)
-
-    rate_deposit = 0.0217	
-    end_deposit = actual_360(valuation_date, valuation_date + relativedelta(months=3))
-
-    future_prices = [98.195, 98.285, 98.35]
-    future_maturities = [date(2025, 8, 18), date(2025, 10, 13), date(2025, 12, 15)]
-    future_intervals = prepare_future_intervals(future_maturities, valuation_date, actual_360)
-
-    swap_rates = [0.01932, 0.0187, 0.01936, 0.02095, 0.02234, 0.02394, 0.02524, 0.02384]
-    swap_end_dates = [valuation_date + relativedelta(years=1), valuation_date + relativedelta(years=2), valuation_date + relativedelta(years=3), valuation_date + relativedelta(years=5), valuation_date + relativedelta(years=7), valuation_date + relativedelta(years=10), valuation_date + relativedelta(years=15), valuation_date + relativedelta(years=30)]
-    swap_coupon_dates = prepare_swap_dates(swap_end_dates, valuation_date, actual_360, 6)
-
-    """valuation_date = date(2025, 4, 28)
-
-    rate_deposit = 0.0428
-    end_deposit = actual_360(valuation_date, valuation_date + relativedelta(months=3))
-
-    future_prices = [96.295, 96.61, 96.82]
-    future_maturities = [third_wednesday(2025, 9), third_wednesday(2025, 12), third_wednesday(2026, 3) - relativedelta(days=1)]
-    future_intervals = prepare_future_intervals(future_maturities, valuation_date, actual_360)
-
-    swap_rates = [0.03837, 0.03523, 0.03458, 0.03508, 0.03611, 0.03746, 0.03904, 0.03870]
-    swap_end_dates = [valuation_date + relativedelta(years=1), valuation_date + relativedelta(years=2), valuation_date + relativedelta(years=3), valuation_date + relativedelta(years=5), valuation_date + relativedelta(years=7), valuation_date + relativedelta(years=10), valuation_date + relativedelta(years=15), valuation_date + relativedelta(years=30)]
-    swap_coupon_dates = prepare_swap_dates(swap_end_dates, valuation_date, actual_360, 12)"""
-
-    lin_curve = bootstrapping(rate_deposit, end_deposit, future_prices, future_intervals, swap_rates, swap_coupon_dates, linear_interpolation)
-    log_curve = bootstrapping(rate_deposit, end_deposit, future_prices, future_intervals, swap_rates, swap_coupon_dates, log_interpolation)
-    spline_curve = bootstrapping(rate_deposit, end_deposit, future_prices, future_intervals, swap_rates, swap_coupon_dates, spline_interpolation)
-
-    T_sorted = sorted(lin_curve.keys())
-    T = np.linspace(T_sorted[1], T_sorted[-1], 300)
-
-    lin_D = np.array([linear_interpolation(lin_curve, t) for t in T])
-    lin_ZC = -np.log(lin_D) / T
-
-    log_D = np.array([log_interpolation(log_curve, t) for t in T])
-    log_ZC = -np.log(log_D) / T
-
-    spline_D = np.array([spline_interpolation(spline_curve, t) for t in T])
-    spline_ZC = -np.log(spline_D) / T
-
-    display_grid(
-        X=[[T, T, T], [T, T, T]],
-        Y=[[lin_D, log_D, spline_D], [lin_ZC, log_ZC, spline_ZC]],
-        titles=["Courbe d'actualisation", "Courbe de taux zéro-coupons"],
-        xlabels="Maturité (années)",
-        ylabels=["Taux d'actualisation", "Taux zéro-coupon"],
-        labels=[["Interpolation linéaire", "Interpolation logarithmique", "Interpolation spline cubique"]] * 3,
-        ncols=1
-    )
-
-    popt_ns = fit(lin_curve, spline_interpolation, nelson_siegel)
-    popt_nss = fit(lin_curve, spline_interpolation, nelson_siegel_svensson)
-
-    print("Fitting Nelson-Siegel parameters:")
-    display_tabular(popt_ns)
-    print("Fitting Nelson-Siegel-Svensson parameters:")
-    display_tabular(popt_nss)
-
-    ZC_ns = nelson_siegel(T, *popt_ns)
-    ZC_nss = nelson_siegel_svensson(T, *popt_nss)
-
-    D_ns = np.exp(-ZC_ns * T)
-    D_nss = np.exp(-ZC_nss * T)
-
-    fwd_ns = -np.gradient(np.log(D_ns), T)
-    fwd_nss = -np.gradient(np.log(D_nss), T)
-
-    display_grid(
-        X=[[T, T], [T, T], [T, T]],
-        Y=[[ZC_ns, ZC_nss], [D_ns, D_nss], [fwd_ns, fwd_nss]],
-        titles=["Courbe de taux zéro-coupons", "Courbe d'actualisation", "Courbe de taux forward"],
-        xlabels="Maturité (années)",
-        ylabels=["Taux zéro-coupons", "Taux d'actualisation", "Taux forward"],
-        labels=[["Nelson-Siegel", "Nelson-Siegel-Svensson"], ["Nelson-Siegel", "Nelson-Siegel-Svensson"], ["Nelson-Siegel", "Nelson-Siegel-Svensson"]],
-        ncols=2
-    )
-
-    return 0
-
-main()
-
-
-
-
+def display_adjusted_curve(curves: list[Curve], legends: list[str]) -> None:
+    display_grid([[curve.T for curve in curves] for _ in range(3)], [[curve.D_ns for curve in curves], [curve.ZC_ns for curve in curves], [curve.FWD_ns for curve in curves]], ["Discount NS", "Zero-Coupon NS", "Forward NS"], "Maturity", ["Discount NS", "Zero-Coupon NS", "Forward NS"], [legends, legends, legends])
+    display_grid([[curve.T for curve in curves] for _ in range(3)], [[curve.D_nss for curve in curves], [curve.ZC_nss for curve in curves], [curve.FWD_nss for curve in curves]], ["Discount NSS", "Zero-Coupon NSS", "Forward NS"], "Maturity", ["Discount NSS", "Zero-Coupon NSS", "Forward NSS"], [legends, legends, legends])
