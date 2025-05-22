@@ -1,9 +1,8 @@
-from utils import Instrument
+from utils import Instrument, display_grid
 from datetime import date
 from typing import Callable
 from scipy.optimize import root
 import numpy as np
-import matplotlib.pyplot as plt
 
 class Bond(Instrument):
     def __init__(self, price: float, valuation_date: date, day_count: Callable, months: int, nominal: float, coupon_dates: list[float], coupon_rates: list[float], rates: list[float]):
@@ -23,6 +22,9 @@ class Bond(Instrument):
         self.clean_price = None
         self.dirty_price = None
 
+        self.R = np.linspace(0, 1, 1000)
+        self.P = np.linspace(50, 150, 1000)
+
     def price_bond(self) -> float:
         total = 0
         for i, date in enumerate(self.coupon_dates):
@@ -31,13 +33,13 @@ class Bond(Instrument):
         return total
     
     def compute_YTM(self) -> float:
-        rates = self.rates.copy()
+        rates_copy = self.rates.copy()
         def equation(YTM: float) -> float:
             self.rates = [YTM] * len(self.coupon_dates)
             return self.price - self.price_bond()
 
         solution = root(equation, 0.05).x[0]
-        self.rates = rates
+        self.rates = rates_copy
         return solution
     
     def compute_duration(self) -> float:
@@ -63,7 +65,7 @@ class Bond(Instrument):
     def compute_DV01(self) -> float:
         return -(self.modified_duration * self.price) / 10000
     
-    def display_metrics(self):
+    def display_metrics(self) -> None:
         print(f"Price: {self.price:.4f}")
         print(f"YTM: {self.YTM:.4%}")
         print(f"Duration: {self.duration:.4f}")
@@ -71,6 +73,42 @@ class Bond(Instrument):
         print(f"Sensitivity: {self.sensitivity:.4f}")
         print(f"Convexity: {self.convexity:.4f}")
         print(f"DV01: {self.DV01:.4f}")
+
+    def display_price_graph(self) -> None:
+        rates_copy = self.rates.copy()
+        
+        def f_price(rate: float) -> float:
+            self.rates = [rate] * len(self.coupon_dates)
+            return self.price_bond()
+        
+        display_grid([[self.R]], [[[f_price(r) for r in self.R]]])
+
+        self.rates = rates_copy
+
+
+    def display_durations_graph(self) -> None:
+        YTM_copy = self.YTM
+
+        def f_duration(rate: float) -> float:
+            self.YTM = rate
+            return self.compute_duration()
+        
+        def f_modified_duration(rate: float) -> float:
+            self.YTM = rate
+            return self.compute_modified_duration()
+        
+        display_grid([[self.R, self.R]], [[[f_duration(r) for r in self.R], [f_modified_duration(r) for r in self.R]]])
+        self.YTM = YTM_copy
+
+    def display_YTM_graph(self) -> None:
+        price_copy = self.price
+        
+        def f_YTM(price: float) -> float:
+            self.price = price
+            return self.compute_YTM()
+        
+        display_grid([[self.P]], [[[f_YTM(p) for p in self.P]]])
+        self.price = price_copy
 
 """R = np.linspace(0, 1, 1000)
 P = np.linspace(50, 150, 1000)

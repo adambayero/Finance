@@ -42,4 +42,8 @@ def bond_example():
 
     bond.display_metrics()
 
+    bond.display_price_graph()
+    bond.display_durations_graph()
+    bond.display_YTM_graph()
+
 bond_example()
