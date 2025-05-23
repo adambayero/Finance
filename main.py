@@ -1,9 +1,9 @@
-from bootstrapping import Deposit, Future, Swap, Curve, display_bootstrap_result, display_adjusted_curve
-from bonds import Bond
-from datetime import date
+from bootstrapping import Deposit, Future, Swap, Curve, display_bootstrap_result, display_adjusted_curve, InflationCurve
+from bonds import Bond, FixedRateBond, ZeroCouponBond, FloatingRateBond, InflationLinkedBond
+from datetime import date, timedelta
 from utils import actual_360, linear_interpolation, log_interpolation, spline_interpolation, display_grid, nelson_siegel, nelson_siegel_svensson
 
-def bootstrapping():
+def bootstrapping_example():
     valuation_date = date(2025, 4, 25)
 
     rate_deposit = 0.0217
@@ -22,29 +22,94 @@ def bootstrapping():
     for rate, year in zip(swap_rates, swap_years):
         instruments.append(Swap(rate, valuation_date, actual_360, 12 * year, 12))
 
-    curves = [Curve(linear_interpolation), 
-              Curve(log_interpolation), 
-              Curve(spline_interpolation)]
-    
-    for curve in curves:
-        curve.bootstrap(instruments)
-        curve.compute_curve()
-        curve.fit(nelson_siegel)
-        curve.adjust_curve(nelson_siegel)
-        curve.fit(nelson_siegel_svensson)
-        curve.adjust_curve(nelson_siegel_svensson)
+    curves = [Curve(linear_interpolation, instruments), 
+              Curve(log_interpolation, instruments), 
+              Curve(spline_interpolation, instruments)]
 
     display_bootstrap_result(curves, ["Linear", "Log", "Spline"])
     display_adjusted_curve(curves, ["Linear", "Log", "Spline"])
 
 def bond_example():
-    bond = Bond(82.44, date(2025, 4, 25), actual_360, 7 * 12, 100, [i for i in range(1, 8)], [0.00625] * 7, [0.0217] * 7)
+    valuation_date = date(2025, 4, 25)
 
-    bond.display_metrics()
+    # --- Instruments pour la courbe de discount ---
+    rate_deposit = 0.0217
+    future_prices = [0.01805, 0.01715, 0.0165]
+    future_maturities = [date(2025, 8, 18), date(2025, 10, 13), date(2025, 12, 15)]
+    swap_rates = [0.01932, 0.0187, 0.01936, 0.02095, 0.02234, 0.02394, 0.02524, 0.02384]
+    swap_years = [1, 2, 3, 5, 7, 10, 15, 30]
 
-    bond.display_price_graph()
-    bond.display_durations_graph()
-    bond.display_YTM_graph()
+    instruments = []
+    instruments.append(Deposit(rate_deposit, valuation_date, actual_360, 3))
+    for price, maturity in zip(future_prices, future_maturities):
+        instruments.append(Future(price, valuation_date, actual_360, 3, maturity))
+    for rate, year in zip(swap_rates, swap_years):
+        instruments.append(Swap(rate, valuation_date, actual_360, 12 * year, 12))
+
+    discount_curve = Curve(log_interpolation, instruments)
+
+    # --- Courbe de forward (ici, forward NSS déjà calculé par la Curve) ---
+    forward_curve = discount_curve  # utilise .forward_nss(t)
+
+    # --- Courbe d'inflation simulée ---
+    cpi_dates = [date(2025, 1, 31) + timedelta(days=30 * i) for i in range(60)]
+    cpi_values = [108.0 + 0.2 * i for i in range(len(cpi_dates))]
+    inflation_curve = InflationCurve(cpi_dates, cpi_values)
+
+    # --- Obligations à tester ---
+
+    print("\n🟩 Fixed Rate Bond")
+    bond_fixed = FixedRateBond(
+        price=82.44,
+        valuation_date=valuation_date,
+        day_count=actual_360,
+        months=7 * 12,
+        nominal=100,
+        coupon_dates=[i for i in range(1, 8)],
+        coupon_rates=[0.00625] * 7,
+        discount_curve=discount_curve
+    )
+    bond_fixed.display_metrics()
+
+    print("\n🟦 Zero Coupon Bond")
+    bond_zc = ZeroCouponBond(
+        price=80.0,
+        valuation_date=valuation_date,
+        day_count=actual_360,
+        months=5 * 12,
+        nominal=100,
+        maturity=5,
+        discount_curve=discount_curve
+    )
+    bond_zc.display_metrics()
+
+    print("\n🟨 Floating Rate Bond")
+    bond_float = FloatingRateBond(
+        price=101.0,
+        valuation_date=valuation_date,
+        day_count=actual_360,
+        months=3 * 12,
+        nominal=100,
+        coupon_dates=[i for i in range(1, 4)],
+        spreads=[0.001] * 3,
+        discount_curve=discount_curve,
+        forward_curve=forward_curve
+    )
+    bond_float.display_metrics()
+
+    print("\n🟥 Inflation Linked Bond")
+    bond_infl = InflationLinkedBond(
+        price=102.0,
+        valuation_date=valuation_date,
+        day_count=actual_360,
+        months=5 * 12,
+        nominal=100,
+        coupon_dates=[i for i in range(1, 6)],
+        real_coupon_rates=[0.01] * 5,
+        discount_curve=discount_curve,
+        inflation_curve=inflation_curve,
+        cpi_initial=108.0
+    )
+    bond_infl.display_metrics()
 
 bond_example()
-print("\n" + "-" * 50 + "\n")

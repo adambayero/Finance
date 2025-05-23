@@ -5,6 +5,7 @@ from typing import Callable
 import numpy as np
 from numpy.typing import NDArray
 from scipy.optimize import root, curve_fit
+from scipy.interpolate import interp1d
 
 class Deposit(Instrument):
     def __init__(self, rate: float, valuation_date: date, day_count: Callable, months: int):
@@ -72,17 +73,22 @@ class Swap(Instrument):
         return unknown_dates, solution.x
 
 class Curve:
-    def __init__(self, interpolation: Callable):
+    def __init__(self, interpolation: Callable, instruments: list[Instrument]):
         self.curve = {0.0: 1.0}
         self.interpolation = interpolation
+        self.instruments = instruments
+
+        self.bootstrap()
 
         self.T = None
         self.D = None
         self.ZC = None
         self.FWD = None
 
-        self.popt_ns = None
-        self.popt_nss = None
+        self.compute_curve()
+
+        self.popt_ns = self.fit(nelson_siegel)
+        self.popt_nss = self.fit(nelson_siegel_svensson)
 
         self.D_ns = None
         self.D_nss = None
@@ -90,6 +96,9 @@ class Curve:
         self.ZC_nss = None
         self.FWD_ns = None
         self.FWD_nss = None
+
+        self.adjust_curve(nelson_siegel)
+        self.adjust_curve(nelson_siegel_svensson)
 
     def update_curve(self, instrument: Instrument) -> None:
         if instrument.name == "deposit":
@@ -100,9 +109,15 @@ class Curve:
             unknown_dates, solution = instrument.price(self.curve, self.interpolation)
             for t, d in zip(unknown_dates, solution):
                 self.curve[t] = d
+
+    def evaluate(self, t: float) -> float:
+        if t in self.curve:
+            return self.curve[t]
+        else:
+            return self.interpolation(self.curve, t)
     
-    def bootstrap(self, instruments: list[Instrument]) -> None:
-        for instrument in instruments:
+    def bootstrap(self) -> None:
+        for instrument in self.instruments:
             print(f"⏳ Bootstrapping {instrument.name} with rate {instrument.rate:.4%}...")
             self.update_curve(instrument)
             print(f"✅ Computed discount factor D({instrument.maturity:.3f}) = {self.curve[instrument.maturity]:.6f} added to the curve.\n")
@@ -135,6 +150,17 @@ class Curve:
             self.ZC_nss = nelson_siegel_svensson(self.T, *self.popt_nss)
             self.D_nss = np.exp(-self.ZC_nss * self.T)
             self.FWD_nss = -np.gradient(np.log(self.D_nss), self.T)
+
+    def forward_nss(self, t: float) -> float:
+        interp = interp1d(self.T, self.FWD_nss, kind='linear', fill_value="extrapolate")
+        return float(interp(t))
+    
+class InflationCurve:
+    def __init__(self, dates: list[float], cpi_values: list[float]):
+        self.interpolator = interp1d(dates, cpi_values, kind="linear", fill_value="extrapolate")
+
+    def get_cpi(self, t: float) -> float:
+        return float(self.interpolator(t))
 
 def display_bootstrap_result(curves: list[Curve], legends: list[str]) -> None:
     display_grid([[curve.T for curve in curves] for _ in range(2)], [[curve.D for curve in curves], [curve.ZC for curve in curves]], ["Discount", "Zero-Coupon"], "Maturity", ["Discount", "Zero-Coupon", "Forward"], [legends, legends])
