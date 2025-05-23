@@ -32,7 +32,20 @@ def bootstrapping_example():
 def bond_example():
     valuation_date = date(2025, 4, 25)
 
-    # --- Instruments pour la courbe de discount ---
+    """ois_deposit_rate = 0.0380
+
+    ois_swap_rates = [ 0.0382, 0.0383, 0.0384, 0.0386, 0.0388, 0.0390, 0.0392, 0.0395, 0.0400]
+
+    ois_swap_months = [1, 2, 3, 6, 9, 12, 24, 36, 60]
+
+    instruments = []
+    instruments.append(Deposit(ois_deposit_rate, valuation_date, actual_360, 1))
+
+    for rate, months in zip(ois_swap_rates, ois_swap_months):
+        instruments.append(Swap(rate, valuation_date, actual_360, months, 12))
+        
+    discount_curve = Curve(linear_interpolation, instruments)"""
+
     rate_deposit = 0.0217
     future_prices = [0.01805, 0.01715, 0.0165]
     future_maturities = [date(2025, 8, 18), date(2025, 10, 13), date(2025, 12, 15)]
@@ -46,17 +59,13 @@ def bond_example():
     for rate, year in zip(swap_rates, swap_years):
         instruments.append(Swap(rate, valuation_date, actual_360, 12 * year, 12))
 
-    discount_curve = Curve(log_interpolation, instruments)
+    forward_curve = Curve(log_interpolation, instruments)
+    discount_curve = forward_curve
 
-    # --- Courbe de forward (ici, forward NSS déjà calculé par la Curve) ---
-    forward_curve = discount_curve  # utilise .forward_nss(t)
-
-    # --- Courbe d'inflation simulée ---
     cpi_dates = [date(2025, 1, 31) + timedelta(days=30 * i) for i in range(60)]
     cpi_values = [108.0 + 0.2 * i for i in range(len(cpi_dates))]
     inflation_curve = InflationCurve(cpi_dates, cpi_values)
 
-    # --- Obligations à tester ---
 
     print("\n🟩 Fixed Rate Bond")
     bond_fixed = FixedRateBond(
