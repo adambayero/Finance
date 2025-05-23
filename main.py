@@ -47,3 +47,4 @@ def bond_example():
     bond.display_YTM_graph()
 
 bond_example()
+print("\n" + "-" * 50 + "\n")
