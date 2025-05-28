@@ -134,6 +134,3 @@ def nelson_siegel_svensson(t: NDArray[np.float64], beta0: float, beta1: float, b
     term2 = term1 - np.exp(-lambd1 * t)
     term3 = ((1 - np.exp(-lambd2 * t)) / (lambd2 * t)) - np.exp(-lambd2 * t)
     return beta0 + beta1 * term1 + beta2 * term2 + beta3 * term3
-
-def derivative(f: callable, x: float, h: float = 1e-5) -> float:
-    return (f(x + h) - f(x - h)) / (2 * h)
