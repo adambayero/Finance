@@ -1,27 +1,38 @@
 from instruments import Instrument
 from market_data import ZeroCouponCurve
 from utils import nelson_siegel, nelson_siegel_svensson, display_grid
-from .pricing_engine import price_deposit, price_future, price_swap
+from .pricing_engine import DepositPricer, FuturePricer, SwapPricer
 from scipy.optimize import curve_fit
 from typing import Callable
 import numpy as np
 from numpy.typing import NDArray
 
-def update_curve(curve: ZeroCouponCurve, instrument: Instrument) -> None:
-    if instrument.name == "deposit":
-        curve.curve[instrument.maturity] = price_deposit(instrument)
-    elif instrument.name == "future":
-        curve.curve[instrument.maturity] = price_future(instrument, curve.curve, curve.interpolation)
-    elif instrument.name == "swap":
-        unknown_dates, solution = price_swap(instrument, curve.curve, curve.interpolation)
+deposit_pricer = DepositPricer()
+future_pricer = FuturePricer()
+swap_pricer = SwapPricer()
+
+def update_curve(curve: ZeroCouponCurve, instrument) -> float:
+    if instrument[0].name == "deposit":
+        result = deposit_pricer.price(*instrument)
+        curve.curve[deposit_pricer.maturity] = result
+        return deposit_pricer.maturity
+
+    elif instrument[0].name == "future":
+        result = future_pricer.price(*instrument, curve.curve, curve.interpolation)
+        curve.curve[future_pricer.maturity] = result
+        return future_pricer.maturity
+    
+    else:
+        unknown_dates, solution = swap_pricer.price(*instrument, curve.curve, curve.interpolation)
         for t, d in zip(unknown_dates, solution):
             curve.curve[t] = d
+        return unknown_dates[-1] 
 
 def bootstrap_curve(curve: ZeroCouponCurve, instruments: list[Instrument]) -> None:
     for instrument in instruments:
-        print(f"⏳ Bootstrapping {instrument.name} with rate {instrument.rate:.4%}...")
-        update_curve(curve, instrument)
-        print(f"✅ Computed discount factor D({instrument.maturity:.3f}) = {curve.curve[instrument.maturity]:.6f} added to the curve.\n")
+        print(f"⏳ Bootstrapping {instrument[0].name} with rate {instrument[1]:.4%}...")
+        maturity = update_curve(curve, instrument)
+        print(f"✅ Computed discount factor D({maturity:.3f}) = {curve.curve[maturity]:.6f} added to the curve.\n")
     print("🎯 Bootstrapping completed!\n")
 
 def compute_curve(curve: ZeroCouponCurve) -> None:
