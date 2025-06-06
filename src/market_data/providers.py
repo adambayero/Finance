@@ -27,7 +27,7 @@ import pandas as pd
 
 option_maturities = [1, 2, 3, 5, 10, 15, 30]  # Maturities from 1 to 5 years
 swap_tenors = [5, 10, 15, 20, 25]  # Tenors from 1 to 20 years
-strikes = [0.02 + 0.005 * i for i in range(1, 21)]  # Strikes from 0.005 to 0.1 in steps of 0.005
+strikes = [0.1, 0.5, 1, 2, 5]  # Strikes from 0.005 to 0.1 in steps of 0.005
 
 data_swaption = []
 
@@ -51,3 +51,13 @@ for T in option_maturities:
 
 df_swaption = pd.DataFrame(data_swaption)
 
+# Hypothèses :
+F = 0.025      # Forward swap rate
+T = 5.0        # Maturité de la swaption
+beta = 0.5     # Paramètre SABR typique
+
+# Strikes autour du forward
+strikes = np.array([0.015, 0.02, 0.025, 0.03, 0.035])
+
+# Volatilités de marché simulées (en cohérence avec une forme "sourire")
+market_vols = np.array([0.23, 0.21, 0.20, 0.205, 0.215])

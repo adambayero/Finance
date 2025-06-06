@@ -1,4 +1,4 @@
-from typing import List, Union
+from typing import Union
 import numpy as np
 from numpy.typing import NDArray
 from tabulate import tabulate
@@ -6,8 +6,9 @@ import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
 from scipy.interpolate import griddata
 from matplotlib import cm
+from matplotlib.animation import FuncAnimation
 
-def display_grid(X: List[List[NDArray[np.float64]]], Y: List[List[NDArray[np.float64]]], titles: Union[str, List[str]] = "", xlabels: Union[str, List[str]] = "", ylabels: Union[str, List[str]] = "", labels: Union[None, List[List[str]]] = None, alpha: float = 0.5, ncols: int = 2) -> None:
+def display_grid(X: list[list[NDArray[np.float64]]], Y: list[list[NDArray[np.float64]]], titles: Union[str, list[str]] = "", xlabels: Union[str, list[str]] = "", ylabels: Union[str, list[str]] = "", labels: Union[None, list[list[str]]] = None, alpha: float = 0.5, ncols: int = 2) -> None:
     
     n = len(X)
     nrows = (n + ncols - 1) // ncols
@@ -40,9 +41,10 @@ def display_grid(X: List[List[NDArray[np.float64]]], Y: List[List[NDArray[np.flo
     plt.show()
 
 def display_tabular(data: list[list], headers: list[str]) -> None:
-    print(tabulate(data, headers=headers, tablefmt="fancy_grid") + "\n")
+    transposed_data = list(zip(*data))
+    print(tabulate(transposed_data, headers=headers, tablefmt="fancy_grid") + "\n")
 
-def display_3d_grid(X: list[NDArray[np.float64]], Y: list[NDArray[np.float64]], Z: list[NDArray[np.float64]], titles: Union[str, List[str]] = "", xlabels: Union[str, List[str]] = "", ylabels: Union[str, List[str]] = "", zlabels: Union[str, List[str]] = "", alpha: float = 0.8, ncols: int = 2, scatter: bool = False):
+def display_3d_grid(X: list[list[NDArray[np.float64]]], Y: list[list[NDArray[np.float64]]], Z: list[list[NDArray[np.float64]]], titles: Union[str, list[str]] = "", xlabels: Union[str, list[str]] = "", ylabels: Union[str, list[str]] = "", zlabels: Union[str, list[str]] = "", alpha: float = 0.8, ncols: int = 2, scatter: bool = False):
 
     n = len(X)
     nrows = (n + ncols - 1) // ncols
@@ -57,10 +59,10 @@ def display_3d_grid(X: list[NDArray[np.float64]], Y: list[NDArray[np.float64]], 
             ax = fig.add_subplot(gs[row, :], projection='3d')
         else:
             ax = fig.add_subplot(gs[row, col], projection='3d')
-
-        ax.plot_trisurf(X[i], Y[i], Z[i], cmap='viridis', edgecolor='none', alpha=alpha)
-        if scatter:
-            ax.scatter(X[i], Y[i], Z[i], color='k', s=8)
+        for (x, y, z) in zip(X[i], Y[i], Z[i]):
+            ax.plot_trisurf(x, y, z, cmap='viridis', edgecolor='none', alpha=alpha)
+            if scatter:
+                ax.scatter(x, y, z, color='k', s=8)
 
         ax.set_title(titles[i] if isinstance(titles, list) else titles)
         ax.set_xlabel(xlabels[i] if isinstance(xlabels, list) else xlabels)
@@ -132,3 +134,4 @@ def display_cube(X: np.ndarray, Y: np.ndarray, Z: np.ndarray, values: np.ndarray
 
     fig.colorbar(C, ax=ax, fraction=0.02, pad=0.1, label=value_label)
     plt.show()
+
