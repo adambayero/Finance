@@ -15,8 +15,8 @@ Projet Python orienté finance quantitative pour le pricing d'instruments de tau
 ## 🛠️ Installation
 
 ```bash
-git clone https://github.com/<your-username>/finance-project.git
-cd finance-project
+git clone https://github.com/TomDupont72/Finance.git
+cd Finance
 pip install -r requirements.txt
 ```
 
@@ -35,11 +35,11 @@ python scripts/main.py
 
 ## 📊 Exemples
 
-- display_3d_graph : surface de volatilité (strike vs maturity vs vol)
-- display_cube : cube de volatilité (strike, maturity, tenor)
-- display_dynamic_grid : animation de la dynamique stochastique de F_t, alpha_t
+- `display_3d_graph` : surface de volatilité (strike vs maturity vs vol)
+- `display_cube` : cube de volatilité (strike, maturity, tenor)
+- `display_dynamic_grid` : animation de la dynamique stochastique de `F_t`, `alpha_t`
 ​
 ## 📎 Auteurs
 
-Projet développé dans un contexte de R&D en finance quantitative.
+Projet développé dans un contexte de R&D en finance quantitative.<br>
 Réalisé par Tom Dupont supervisé par Mahdi Akkouh
