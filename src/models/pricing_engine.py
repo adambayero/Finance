@@ -1,4 +1,4 @@
-from instruments import Deposit, Future, Swap, Bond, Swaption
+import Deposit, Future, Swap, Bond, Swaption
 from utils import display_tabular
 from market_data import ZeroCouponCurve, InflationCurve
 from scipy.stats import norm
